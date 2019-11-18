@@ -1,0 +1,233 @@
+const AWS = require('aws-sdk');
+const https = require('https');
+const dynamodb = new AWS.DynamoDB({region: 'us-east-1', apiVersion: '2012-08-10'});
+
+
+exports.handler = (event, context, callback) => {
+  
+  let body = event; 
+
+    console.log("Message : Here is the requst body :  ", body);
+    console.log("Message : Action of the event is : ", event.action)
+    console.log("Message : Headers in the request", event.headers)
+    
+    let action = event.action;
+    if(action == null){
+       action = event.headers.apiname; 
+    };
+    
+    console.log("Message : action is ", action)
+    if(action != 'input.contactUs' && action != 'contactus'){
+        console.log("ErrorMessage : Action of the event is not contact us, Sending bad response")
+        callback(null, buildChatResponse("Sorry I dont know what is this"))
+        return;
+        
+    }
+    
+    if (!event.emailId.match(/^[^@]+@[^@]+$/)) {
+      console.log("ErrorMessage : invalid email address", event);
+      context.done(null, buildChatResponse("Invalid email id "));
+      return;
+  }
+  
+  
+  let fields = ["name", "emailId", "phoneNumber", "message"];
+  let dbObj = {};
+  
+  dbObj["contactId"] = {
+      S: "contact_"+ Date.now().toString()
+  };
+  
+  console.log("contact id is ", dbObj["contactId"]);
+  console.log("parameters from event", event)
+  
+  for(let i = 0; i < fields.length; i++){
+      if((fields[i] in event && event[fields[i]]))
+        console.log("Message : adding : " + fields[i]);    
+        dbObj[fields[i]] = { S : event[fields[i]]}
+  }
+  dbObj["dateAdded"] = { S: (new Date().getMonth()+1).toString()+'-'+(new Date().getDate()-1).toString()+'-'+ new Date().getFullYear().toString()};
+  
+  const params = {
+    Item : dbObj,
+    TableName : "bellcoww_contactus"
+  }
+  console.log("Message : adding data to table ", params);
+  
+    const parameters = event;
+    console.log("Message : parameters are ", parameters);
+  
+  
+    var name = parameters['name'];
+    var emailId = parameters['emailId'];
+    var phoneNumber = parameters['phoneNumber'];
+    var message = parameters['message'];
+  
+  //This method is for writing into database
+  dynamodb.putItem(params, function(err, data){
+            console.log("Message : inside putItem method");
+       if(err) {
+           console.log("Error in storing data :: " + err);
+           callback(err)
+       }else{
+           console.log("successfully added to database about "+ data)
+           sendEmailNotification(name, emailId, phoneNumber, message);
+          sendSlackNotification(name, emailId, phoneNumber, message)
+           callback(null, buildChatResponse("Hey, " +  + " One of our Bellcoww wil soon contact you."));
+       }
+    });
+  
+  console.log("Message : After put method");
+  
+  //sending response
+  function buildChatResponse(chat){
+        return {
+            "speech" : chat, "displayText" : chat, "message" : "success"
+        };
+        
+    };
+    
+
+  
+  //this method is for email sending 
+    function sendEmailNotification(name, emailId, phoneNumber, message){
+      name = name.substr(0, 40).replace(/[^\w\s]/g, '');
+      
+      const userHtmlBody = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+          </head>
+          <body>
+            <p>Hi ${name},</p>
+            <p> Thanks for contacting bellcoww, one of the bellcoww will contact you ASAP.</p>
+            
+            
+          </body>
+        </html>
+    `;
+    const clientHtmlBody = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+          </head>
+          <body>
+            <p> Hey Guys, Here is another partner seeking our help.... Go</p>
+            <p> Name : ${name} </p>
+            <p> Email : ${emailId} </p>
+            <p> Phone : ${phoneNumber} </p>
+            <p> Message : ${message ? message : ''} </p>
+          </body>
+        </html>
+    `;
+    
+    const clientTextBody = ` Hi Guys,...`;
+    const userTextBody = ` Hi ${name},...`;
+    
+    
+    const userEmailParams = {
+        Destination: {
+          ToAddresses: [emailId]
+        },
+        Message: {
+          Body: {
+            Html: {
+              Charset: "UTF-8",
+              Data: userHtmlBody
+            },
+            Text: {
+              Charset: "UTF-8",
+              Data: userTextBody
+            }
+          },
+          Subject: {
+            Charset: "UTF-8",
+            Data: "Thanks for Contacting BellCoww!"
+          }
+        },
+        Source: "David Lamb from BellCoww <dlamb@bellcoww.com>"
+    };
+    
+    const clientEmailParams = {
+        Destination: {
+          ToAddresses: ['dlamb@bellcoww.com']    // 'dance@artismotion.org'
+        },
+        Message: {
+          Body: {
+            Html: {
+              Charset: "UTF-8",
+              Data: clientHtmlBody
+            },
+            Text: {
+              Charset: "UTF-8",
+              Data: clientTextBody
+            }
+          },
+          Subject: {
+            Charset: "UTF-8",
+            Data: "Another partner seeking our help!"
+          }
+        },
+        Source: "New contact from BellCoww <dlamb@bellcoww.com>"
+    };
+    
+    //Create the promise and SES service object
+    console.log("Message : Sending email", userEmailParams)
+    const userSendPromise = new AWS.SES({ apiVersion: "2010-12-01" }).sendEmail(userEmailParams).promise();
+    console.log("Message : sending email", clientEmailParams)
+    const clientSendPromise = new AWS.SES({ apiVersion: "2010-12-01" }).sendEmail(clientEmailParams).promise();
+    
+       // Handle promise's fulfilled/rejected states
+    
+    clientSendPromise.then(data => {
+      console.log(data.MessageId);
+      return;
+    }).catch(err => {
+      console.error(err, err.stack);
+      return;
+    });
+    
+    userSendPromise.then(data => {
+      console.log(data.MessageId);
+      context.done(null, {"success":true,"message":"Thanks for Contacting bellcoww! We will reach you soon.."});
+    }).catch(err => {
+      console.error(err, err.stack);
+      context.done(null, {"success":false,"message":"Failed to send email notification"});
+    });
+    
+      
+  }
+  
+  
+  
+  //this method is for slack notification
+  function sendSlackNotification(name, emailId, phoneNumber, message){
+      
+     //this the paylaod for the slack message 
+    const payload = JSON.stringify({
+        text: `Hey BellCows, Here is another partner seeking our help.... Go \n
+        Name : ${name} \n
+        Email Id : ${emailId}\n
+        Phone Number : ${phoneNumber} \n
+        Message : ${message}`,
+      });
+    
+    
+    const options = {
+        hostname: "hooks.slack.com",
+        method: "POST",
+        path: "/services/TG8S6QYHZ/BGBPJ0ZKP/dBGnlOqDRh4gJSOJOFE8pqvo",
+        };
+    
+     //http call for slack
+    const req = https.request(options,
+          (res) => res.on("data", () => console.log("Message : Slack notification sent ")))
+      req.on("error", (error) => callback(JSON.stringify(error)));
+      req.write(payload);
+      req.end();
+  
+  
+  }
+
+
+};
