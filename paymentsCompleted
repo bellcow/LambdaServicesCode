@@ -2,7 +2,7 @@ const AWS = require('aws-sdk');
 const DynamoDB = new AWS.DynamoDB.DocumentClient({region: 'us-east-1', apiVersion: '2012-08-10'});
 
 exports.handler = async (data, context, callback) => {
-    data = JSON.parse(data.body);
+    //data = JSON.parse(data.body);
     console.log('----data---',data);
     if(!data) {
         context.done(null, {"success":false, "message":"Invalid parameters"});
@@ -11,11 +11,10 @@ exports.handler = async (data, context, callback) => {
     let referenceId = data.referenceId;
     let transactionId = data.transactionId;
     
-    //var body = new SquareConnect.CreateCheckoutRequest();
     console.log(referenceId, transactionId);
     const params = {
         Key : {"orderId": referenceId},
-        TableName : "squareup_orders",
+        TableName : "square_payments",
         UpdateExpression: "set paymentStatus = :paymentStatus, transactionId = :transactionId",
         ExpressionAttributeValues:{
             ":paymentStatus":'Completed',
@@ -51,15 +50,15 @@ exports.handler = async (data, context, callback) => {
                       <head>
                       </head>
                       <body>
-                        <p> Hey Guys, New partner is registered successfully. Payment has been completed.</p>
+                        <p> Hey Guys, New client is registered successfully. Payment has been completed.</p>
                         <p> Order Reference : ${referenceId} </p>
                       </body>
                     </html>
                 `;
-                const danceTextBody = ` Hi Guys,...`;
+                const danceTextBody = ` Hi Team,...`;
                 const danceEmailParams = {
                     Destination: {
-                      ToAddresses: ['lakshman.chanapathi@gmail.com']    // 'dance@artismotion.org'
+                      ToAddresses: ['dlamb@bellcoww.com']    // 'info@artismotion.org'
                     },
                     Message: {
                       Body: {
@@ -74,10 +73,10 @@ exports.handler = async (data, context, callback) => {
                       },
                       Subject: {
                         Charset: "UTF-8",
-                        Data: "New partner is registered successfully."
+                        Data: "New client is registered successfully."
                       }
                     },
-                    Source: "New partner is registered successfully <dlamb@bellcowpartners.com>"
+                    Source: "New partner is registered successfully <dlamb@bellcoww.com>"
                 };
                 const danceSendPromise = new AWS.SES({ apiVersion: "2010-12-01" }).sendEmail(danceEmailParams).promise();
                 danceSendPromise.then(data => {
