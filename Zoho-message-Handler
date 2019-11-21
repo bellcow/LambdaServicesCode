@@ -1,0 +1,109 @@
+response = Map();
+msg = message.get("text");
+if(operation.equals("chat"))
+{
+	faqList = {};
+	/***to connect your google spreadsheet, replace the sheet id and connection name
+url:"https://sheets.googleapis.com/v4/spreadsheets/1E0e8vUtZEG6YfF_sA54EAXmXuCsG6xgCPuOJL-J13yA/values/Sheet1!A2:B30?majorDimension=ROWS"
+connection:your-connection-name-goes-here
+***/
+	apiresponse = invokeurl
+	[
+		url :"https://sheets.googleapis.com/v4/spreadsheets/1E0e8vUtZEG6YfF_sA54EAXmXuCsG6xgCPuOJL-J13yA/values/Sheet1!A2:B30?majorDimension=ROWS"
+		type :GET
+		connection:"googlesheet"
+	];
+	info apiresponse;
+	recordList = apiresponse.get("values");
+	for each  rows in recordList
+	{
+		if(msg.equalsIgnoreCase(rows.get("0")))
+		{
+			faqList.insert(rows.get("1"));
+		}
+	}
+	response.put("action","reply");
+	response.put("replies",{"Please select your question or write it down for us"});
+	response.put("suggestions",faqList);
+}
+else if(operation.equals("message"))
+{
+	/***to connect your google spreadsheet, replace the sheet id and connection name
+url:"https://sheets.googleapis.com/v4/spreadsheets/your-spreadsheet-id-goes-here/values/Sheet1!A2:B30?majorDimension=ROWS"
+connection:your-connection-name-goes-here
+***/
+	apiresponse = invokeurl
+	[
+		url :"https://sheets.googleapis.com/v4/spreadsheets/1E0e8vUtZEG6YfF_sA54EAXmXuCsG6xgCPuOJL-J13yA/values/Sheet1!A2:G30?majorDimension=ROWS"
+		type :GET
+		connection:"googlesheet"
+	];
+	//info apiresponse;
+	recordList = apiresponse.get("values");
+	for each  rows in recordList
+	{
+		if(msg.equalsIgnoreCase(rows.get("1")))
+		{
+			rows.remove("0");
+			rows.remove("0");
+			info rows;
+			responseCollection = Collection();
+			for each  resp in rows
+			{
+				responseCollection.insert(resp);
+			}
+			responseCollection.insert("Is there anything else I can help you with?");
+			response.put("action","context");
+			response.put("context_id","endactionhandler");
+			_endaction = {"name":"endaction","replies":responseCollection,"input":{"type":"select","options":{"No, I'm done","Yes, I have another question"}}};
+			response.put("questions",{_endaction});
+			return response;
+		}
+	}
+	/***to connect your dialogflow account replace the Bearer Id with the client id from dialog flow
+headersMap = {"Authorization":"Bearer your-client-id-goes-here","Content-type":"application/json"};
+***/
+	headersMap = {"Authorization":"Bearer 6c22a716e25d45d5b679a1038dcfec99","Content-type":"application/json"};
+	dataMap = {"v":"20170712","lang":"en","query":msg,"sessionId":"12345"};
+	resp = invokeurl
+	[
+		url :"https://api.dialogflow.com/v1/query"
+		type :POST
+		parameters:dataMap.toString()
+		headers:headersMap
+	];
+	info resp;
+	result = resp.get("result");
+	speech = result.get("speech");
+	intentname = result.get("metadata").get("intentName");
+	if(intentname.equals("Default Fallback Intent"))
+	{
+		response.put("action","reply");
+		response.put("replies",{speech});
+		if(!msg.equalsIgnoreCase("Yes, I have another question") && !msg.equalsIgnoreCase("No, I'm done"))
+		{
+			paramsSheet = {"majorDimension":"ROWS","values":{{msg,now}}};
+			/***The url below is to store the unknown question
+	to connect your google spreadsheet, replace the sheet id and connection name
+	url :"https://sheets.googleapis.com/v4/spreadsheets/1DqKpf1nd1yO8rkGJtSUQnaXJ9Ym4KT8JcDabkw8dVNI/values/ZobotSheet-UnknownQuestions!A2:E2:append?valueInputOption=USER_ENTERED"
+connection:your-connection-name-goes-here
+***/
+			apiresponseForInput = invokeurl
+			[
+				url :"https://sheets.googleapis.com/v4/spreadsheets/1DqKpf1nd1yO8rkGJtSUQnaXJ9Ym4KT8JcDabkw8dVNI/values/Sheet1!A2:E2:append?valueInputOption=USER_ENTERED"
+				type :POST
+				parameters:paramsSheet.toString()
+				headers:{"Content-Type":"application/json"}
+				connection:"googlesheet"
+			];
+		}
+	}
+	else
+	{
+		response.put("action","context");
+		response.put("context_id","endactionhandler");
+		_endaction = {"name":"endaction","replies":{speech,"Is there anything else I can help you with?"},"input":{"type":"select","options":{"No, I'm done","Yes, I have another question"}}};
+		response.put("questions",{_endaction});
+	}
+}
+return response;
