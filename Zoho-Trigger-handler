@@ -1,0 +1,26 @@
+response = Map();
+response.put("action","reply");
+startList = {};
+/***to connect your google spreadsheet, replace the sheet id and connection name
+url:"https://sheets.googleapis.com/v4/spreadsheets/1E0e8vUtZEG6YfF_sA54EAXmXuCsG6xgCPuOJL-J13yA/values/Sheet1!A2:B30?majorDimension=ROWS"
+connection:your-connection-name-goes-here
+***/
+apiresponse = invokeurl
+[
+	url :"https://sheets.googleapis.com/v4/spreadsheets/1E0e8vUtZEG6YfF_sA54EAXmXuCsG6xgCPuOJL-J13yA/values/Sheet1!A2:B30?majorDimension=ROWS"
+	type :GET
+	connection:"googlesheet"
+];
+info apiresponse;
+recordList = apiresponse.get("values");
+for each  rows in recordList
+{
+	menuOption = rows.get("0");
+	if(!startList.contains(menuOption))
+	{
+		startList.insert(menuOption);
+	}
+}
+response.put("replies",{"Hey there :)","Choose an option below to post your queries"});
+response.put("input",{"type":"select","options":startList});
+return response;
