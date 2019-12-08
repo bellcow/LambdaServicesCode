@@ -5,7 +5,6 @@ const dynamodb = new AWS.DynamoDB({
     apiVersion: '2012-08-10'
 });
 var docClient = new AWS.DynamoDB.DocumentClient();
-let result;
 
 function recaptchaVerification(recaptcha, recaptchaSecretValue) {
 
@@ -39,16 +38,15 @@ function recaptchaVerification(recaptcha, recaptchaSecretValue) {
                     reject(false);
                 }
 
-                var response = JSON.parse(d);
+                const response = JSON.parse(d);
                 console.log('Message : response from recaptcha ', response);
                 if (response.success === true) {
                     console.log('Message : recaptcha response is success');
                     resolve(true);
                 } else {
                     console.log('Message : recaptcha response is failed');
-                    //reject(false);
-                    //testing
-                    resolve(true);
+                    reject(false);
+
                 }
             })
         });
@@ -70,7 +68,7 @@ exports.handler = async (event, context, callback) => {
         const recaptchaSecretValue = await loadRecaptchaSecret(event.appname);
         console.log("Message : recaptcha secret is ", recaptchaSecretValue);
         let recaptchaSuccess = await recaptchaVerification(event.recaptcha, recaptchaSecretValue);
-        console.log("Message : recaptcha response is ", recaptchaSuccess)
+        console.log("Message : recaptcha response is ", recaptchaSuccess);
 
         if (event.recaptcha && recaptchaSuccess) {
             console.log("Message : Action of the event is : ", event.action);
