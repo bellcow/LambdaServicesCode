@@ -1,0 +1,279 @@
+const AWS = require('aws-sdk');
+const https = require('https');
+const dynamoDb = new AWS.DynamoDB.DocumentClient({
+    region: 'us-east-1',
+    apiVersion: '2012-08-10'
+});
+const docClient = new AWS.DynamoDB.DocumentClient();
+var SquareConnect = require('square-connect');
+const uuid = require('uuid');
+const defaultClient = SquareConnect.ApiClient.instance;
+const oauth2 = defaultClient.authentications['oauth2'];
+const checkoutApiInstance = new SquareConnect.CheckoutApi();
+let locationKey;
+
+function recaptchaVerification(recaptcha, recaptchaSecretValue) {
+
+    return new Promise((resolve, reject) => {
+
+        console.log('Message : recaptcha value is ', recaptcha);
+        console.log('Message : recaptchaSecret value is ', recaptchaSecretValue);
+        const querystring = require('querystring');
+        const postData = querystring.stringify({
+            secret: recaptchaSecretValue,
+            response: recaptcha
+        });
+        console.log('Message : postdata for recaptcha : ', postData);
+        var options = {
+            hostname: 'www.google.com',
+            path: '/recaptcha/api/siteverify',
+            method: 'POST',
+            port: 443,
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Content-Length': Buffer.byteLength(postData)
+            }
+
+        };
+
+        var req = https.request(options, (res) => {
+
+            res.on('data', (d) => {
+                if (d === undefined) {
+                    console.log('Message : Error is ', d);
+                    reject(false);
+                }
+
+                const response = JSON.parse(d);
+                console.log('Message : response from recaptcha ', response);
+                if (response.success === true) {
+                    console.log('Message : recaptcha response is success');
+                    resolve(true);
+                } else {
+                    console.log('Message : recaptcha response is failed');
+                    reject(false);
+                    
+
+                }
+            })
+        });
+        req.write(postData);
+        req.end();
+
+    })
+}
+
+
+function loadSquareData(appname) {
+
+    return new Promise((resolve, reject) => {
+
+        const params = {
+            TableName: 'sqaure_apps',
+            KeyConditionExpression: "#ap = :appname",
+            ExpressionAttributeNames: {
+                "#ap": "appname"
+            },
+            ExpressionAttributeValues: {
+                ":appname": appname
+            }
+        };
+
+        console.log('Message : params for getting square details and recaptcha secret ', params);
+
+        docClient.query(params, function (err, data) {
+            if (err) {
+                console.error("ErrorMessage : Unable to query. Error:", JSON.stringify(err, null, 2));
+            } else {
+                console.log("Message : loaded data is ", data.Items[0]);
+                resolve(data.Items[0]);
+            }
+
+        });
+
+    })
+
+}
+
+//sending response
+function buildChatResponse(chat, message) {
+    return {
+        "speech": chat,
+        "displayText": chat,
+        "message": message
+    };
+
+}
+
+exports.handler = async(data, context, callback) => {
+    console.log('Message : data is ', data);
+    if (!data) {
+        context.done(null, {
+            "success": false,
+            "message": "Invalid parameters"
+        });
+    } else if (!data.appname) {
+        context.done(null, {
+            "success": false,
+            "message": "appname is null"
+        });
+    } else if (data.appname) {
+        console.log('Message : appname is ', data.appname);
+        const square_data = await loadSquareData(data.appname);
+        console.log('database fetch for appname is ', square_data);
+        let recaptchaSuccess = await recaptchaVerification(data.recaptcha, square_data.recaptchaSecret);
+        console.log("Message : recaptcha response is ", recaptchaSuccess);
+
+        if(data.recaptcha && recaptchaSuccess){
+            oauth2.accessToken = square_data.accessToken;
+            locationKey = square_data.locationKey;
+            console.log('locationKey is  ', locationKey);
+            console.log('accessToken is  ', square_data.accessToken);
+
+
+            let orderData = data.orderInfo;
+            let referenceId = 'order_' + Date.now().toString();
+
+            orderData.idempotency_key = uuid.v1();
+            orderData.order.reference_id = referenceId;
+
+
+            return checkoutApiInstance.createCheckout(locationKey, orderData).then(async function (checkoutRes) {
+                console.log('----success------', checkoutRes);
+                let dbObj = {};
+                dbObj["orderId"] = referenceId;
+                dbObj["transactionId"] = referenceId;
+                dbObj['line_items'] = orderData.order.line_items;
+                dbObj['discounts'] = orderData.order.discounts;
+                dbObj['taxes'] = orderData.order.taxes;
+                dbObj['paymentStatus'] = 'Pending';
+                dbObj['name'] = data.name;
+                dbObj['email'] = data.email;
+                dbObj['phone'] = data.phone;
+                dbObj["dateAdded"] = (new Date().getMonth() + 1).toString() + '-' + (new Date().getDate() - 1).toString() + '-' + new Date().getFullYear().toString();
+                dbObj["squareResponse"] = checkoutRes;
+                dbObj["appname"] = data.appname;
+                const params = {
+                    Item: dbObj,
+                    TableName: "square_payments"
+                };
+
+                let putItem = new Promise((res, rej) => {
+                    console.log('params', params);
+                    dynamoDb.put(params, async(err, data) => {
+                        if (err) {
+                            console.log("Error in storing data :: " + err);
+                            rej({
+                                "success": false,
+                                "message": "Failed to store order info"
+                            });
+                        } else {
+                            console.log("successfully added to database about " + data);
+                            let emailRes = await sendEmailNotification();
+                            res(checkoutRes);
+                        }
+                    });
+                });
+
+                const result = await putItem;
+                console.log('returning square response to UI', checkoutRes);
+                //return checkoutRes;
+                callback(null, buildResponse(checkoutRes));
+
+
+                function buildResponse(res) {
+
+                    return {
+                        "checkoutPageUrl": res.checkout.checkout_page_url,
+                        "referenceId": res.checkout.order.reference_id,
+                        "transactionId": res.checkout.order.id,
+                        "message": "paymentCreated"
+                    }
+                }
+
+
+                async function sendEmailNotification() {
+                    return new Promise(async function (resolve, reject) {
+                        try {
+                            console.log('came to mail');
+                            const danceHtmlBody = `
+											<!DOCTYPE html>
+											<html>
+											  <head>
+											  </head>
+											  <body>
+												<p> Hey Guys, Here is another partner is trying to register for classes. Payment not yet completed.</p>
+												<p> Order Reference : ${referenceId} </p>
+												<p> Order Details : ${JSON.stringify(orderData.order.line_items)} </p>
+												<p> Name : ${data.name} </p>
+												<p> Email : ${data.email} </p>
+												<p> Phone : ${data.phone} </p>
+											  </body>
+											</html>
+										`;
+                            const danceTextBody = ` Hi Guys,...`;
+                            const danceEmailParams = {
+                                Destination: {
+                                    ToAddresses: ['dlamb@bellcoww.com'] // 'info@artismotion.org'
+                                },
+                                Message: {
+                                    Body: {
+                                        Html: {
+                                            Charset: "UTF-8",
+                                            Data: danceHtmlBody
+                                        },
+                                        Text: {
+                                            Charset: "UTF-8",
+                                            Data: danceTextBody
+                                        }
+                                    },
+                                    Subject: {
+                                        Charset: "UTF-8",
+                                        Data: "New client payment initialized"
+                                    }
+                                },
+                                Source: "New client is trying to register for classes <dlamb@bellcoww.com>"
+                            };
+                            const danceSendPromise = new AWS.SES({
+                                apiVersion: "2010-12-01"
+                            }).sendEmail(danceEmailParams).promise();
+                            danceSendPromise.then(data => {
+                                console.log('dance email response', data);
+                                return resolve({
+                                    "success": true,
+                                    "message": "Thanks for Contacting Art is motion! We will reach you soon.."
+                                });
+                            }).catch(err => {
+                                console.error(err, err.stack);
+                                return resolve({
+                                    "success": false,
+                                    "message": "Failed to send email notification"
+                                });
+                            });
+                        } catch (err) {
+                            console.log(err);
+                            return resolve({
+                                "success": false,
+                                "message": "Failed to send email notification"
+                            });
+                        }
+                    });
+                }
+
+
+            }, function (error) {
+                console.error('----error------', error);
+                callback(error, null);
+            });
+
+        }else {
+            callback(null, buildChatResponse("recaptcha failed", 'failed'))
+        }
+
+
+
+
+    }
+
+
+};
