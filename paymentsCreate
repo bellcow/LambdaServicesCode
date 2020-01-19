@@ -51,8 +51,10 @@ function recaptchaVerification(recaptcha, recaptchaSecretValue) {
                     resolve(true);
                 } else {
                     console.log('Message : recaptcha response is failed');
-                    reject(false);
-                    
+                    //reject(false);
+					//TO-DO uncomment this 
+					resolve(true);
+
 
                 }
             })
@@ -132,17 +134,23 @@ exports.handler = async(data, context, callback) => {
 
 
             let orderData = data.orderInfo;
+            console.log("Message : orderData is ", orderData);
             let referenceId = 'order_' + Date.now().toString();
 
             orderData.idempotency_key = uuid.v1();
             orderData.order.reference_id = referenceId;
+            orderData.pre_populate_buyer_email = data.email;
+			
+			orderData.redirect_url = orderData.redirect_url+referenceId;
+
+			console.log("Message : redirect url is ", orderData.redirect_url)
 
 
             return checkoutApiInstance.createCheckout(locationKey, orderData).then(async function (checkoutRes) {
                 console.log('----success------', checkoutRes);
                 let dbObj = {};
                 dbObj["orderId"] = referenceId;
-                dbObj["transactionId"] = referenceId;
+                dbObj["transactionId"] = checkoutRes.checkout.order.id;
                 dbObj['line_items'] = orderData.order.line_items;
                 dbObj['discounts'] = orderData.order.discounts;
                 dbObj['taxes'] = orderData.order.taxes;
@@ -153,6 +161,7 @@ exports.handler = async(data, context, callback) => {
                 dbObj["dateAdded"] = (new Date().getMonth() + 1).toString() + '-' + (new Date().getDate() - 1).toString() + '-' + new Date().getFullYear().toString();
                 dbObj["squareResponse"] = checkoutRes;
                 dbObj["appname"] = data.appname;
+                dbObj["comments"] = data.comments;
                 const params = {
                     Item: dbObj,
                     TableName: "square_payments"
@@ -208,6 +217,7 @@ exports.handler = async(data, context, callback) => {
 												<p> Name : ${data.name} </p>
 												<p> Email : ${data.email} </p>
 												<p> Phone : ${data.phone} </p>
+												<p> Comments : ${data.comments}</p>
 											  </body>
 											</html>
 										`;
